@@ -1,5 +1,8 @@
 # fft_stm32
-Here is a quick implementation of fft using the CMSIS DSP library.
+Here is a quick implementation of fft using the CMSIS DSP library. Attached to this repository, you'll find: <br>
+- main.c (main file of the uC software).
+- python script, which is in charge of receiving uart data from uC and plot them on a graph.
+- images, which are plots of fft I have realized with this software.
 
 # Environment of development
 
