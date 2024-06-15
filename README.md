@@ -3,6 +3,8 @@ Here is a quick implementation of fft using the CMSIS DSP library.
 
 # Environment of development
 
+### Software configuration
+
 - Linux debian 6.1.0-17-amd64 #1 SMP PREEMPT_DYNAMIC Debian 6.1.69-1 (2023-12-30) x86_64 GNU/Linux
 - STM32CubeIDE==1.15.1
 - STM32CubeMX==6.3.0
@@ -11,3 +13,7 @@ Here is a quick implementation of fft using the CMSIS DSP library.
 - Java==11.0.10
 - Python==3.11.2
 
+### Hardware configuration
+
+- Nucleo-F446ZE
+- USB wire to connect my ST-Link to my personal computer
