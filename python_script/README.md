@@ -11,6 +11,11 @@ As such, the python script is responsible for receiving serial data, and plottin
 
 Make sure to exexute all these command line before running uC code.
 
+Install tkinter <br>
+```
+sudo apt-get install python3-tk
+```
+
 Create Virtual env<br>
 ```
 python -m venv venv
