@@ -23,6 +23,7 @@
 /* USER CODE BEGIN Includes */
 #include "arm_math.h"
 #include <stdio.h>
+#include "core_cm4.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -32,9 +33,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define SAMPLES 1024  // Nombre de points pour la FFT
-#define SIGNAL_FREQUENCY_1 69.0f
-#define SIGNAL_FREQUENCY_2 10.0f
+#define SAMPLES 512  // Nombre de points pour la FFT
 #define SAMPLING_FREQUENCY 1024.0f
 float32_t signal[SAMPLES] = {0.0};
 float32_t output[SAMPLES] = {0.0};
@@ -101,10 +100,6 @@ void perform_fft() {
 
     // Conversion des résultats de la FFT en magnitudes
     arm_cmplx_mag_f32(signal, output, SAMPLES / 2);
-    
-    for (uint32_t i = 0; i < SAMPLES / 2; i++) {
-        output[i] /= SAMPLES;
-    }
 }
 
 void send_result(float32_t *tx_data, uint8_t len)
@@ -114,6 +109,22 @@ void send_result(float32_t *tx_data, uint8_t len)
     data = (uint32_t)(tx_data[i]*1000000);
     printf("%ld\n", data);
   }
+}
+
+void start_measurement(void)
+{
+  DWT->CYCCNT = 0;
+  DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+}
+
+uint32_t stop_measurement(void)
+{
+  return DWT->CYCCNT;
+}
+
+float32_t time_of_execution(uint32_t nb_of_cycles)
+{
+  return 1000000*(float32_t)nb_of_cycles / HAL_RCC_GetHCLKFreq();
 }
 
 /* USER CODE END 0 */
@@ -151,10 +162,20 @@ int main(void)
   MX_USART3_UART_Init();
   MX_USB_OTG_FS_PCD_Init();
   /* USER CODE BEGIN 2 */
+  uint32_t nb_of_cycles = 0;
+  float32_t time_of_exec_us = 0.0;
+  CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
   uint32_t frequencies[3] = {10, 20, 65};
   combine_signals_evolve(signal, frequencies, 3);
-  //apply_hamming_window(signal, windowed);
-  perform_fft();
+  start_measurement();
+  for (int i=0; i<1000; i++)
+  {
+    perform_fft();
+  }
+  nb_of_cycles = stop_measurement();
+  time_of_exec_us = time_of_execution(nb_of_cycles);
+
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
