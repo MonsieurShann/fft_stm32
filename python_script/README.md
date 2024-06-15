@@ -11,16 +11,22 @@ As such, the python script is responsible for receiving serial data, and plottin
 
 Make sure to exexute all these command line before running uC code.
 
-\`\`\`sh
-# Create python virtual env
+Create Virtual env<br>
+```
 python -m venv venv
+```
 
-# Activate virtual env
+Activate virtual env<br>
+```
 source venv/bin/activate
+```
 
-# Install dependencies
+Install dependencies<br>
+```
 pip install -r requirements.txt
+```
 
-# Run the soft
+Run the soft<br>
+```
 python fft.py
-\`\`\`
+```
