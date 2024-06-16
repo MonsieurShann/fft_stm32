@@ -1,4 +1,3 @@
-/* USER CODE BEGIN Header */
 /**
   ******************************************************************************
   * @file           : main.c
@@ -33,11 +32,14 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define SAMPLES 512  // Nombre de points pour la FFT
+#define SAMPLES 2048  // Nombre de points pour la FFT
 #define SAMPLING_FREQUENCY 1024.0f
 float32_t signal[SAMPLES] = {0.0};
 float32_t output[SAMPLES] = {0.0};
-float32_t windowed[SAMPLES] = {0.0};
+q15_t signal_q15[SAMPLES] = {0.0};
+q15_t output_q15[SAMPLES] = {0.0};
+q31_t signal_q31[SAMPLES] = {0.0};
+q31_t output_q31[SAMPLES] = {0.0};
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -69,45 +71,110 @@ static void MX_USB_OTG_FS_PCD_Init(void);
 #define PUTCHAR_PROTOTYPE int fputc(int ch, FILE *f)
 #endif /* __GNUC__ */
 
-void generate_sine_wave(float32_t* signal, float32_t frequency) {
-    for (uint32_t i = 0; i < SAMPLES; i++) {
-        float32_t angle = 2 * PI * frequency * ((float32_t)i / SAMPLING_FREQUENCY);
+void generate_sine_wave(float32_t* signal, float32_t frequency, uint32_t nb_s, uint32_t s_freq) 
+{
+    for (uint32_t i = 0; i < nb_s; i++) {
+        float32_t angle = 2 * PI * frequency * ((float32_t)i / s_freq);
         signal[i] += arm_sin_f32(angle);
     }
 }
 
-void combine_signals_evolve(float32_t *signal, uint32_t *frequencies, uint32_t frequenciesSize)
+void generate_sine_wave_q15(q15_t *input_q15, uint32_t freq, uint32_t nb_s, uint32_t s_freq) 
 {
-  for (int i=0; i<frequenciesSize; i++)
-    generate_sine_wave(signal, frequencies[i]);
-}
-
-void apply_hamming_window(float32_t* signal, float32_t* windowed_signal) {
-    for (uint32_t i = 0; i < SAMPLES; i++) {
-        float32_t w = 0.54 - 0.46 * arm_cos_f32(2 * PI * i / (SAMPLES - 1));
-        windowed_signal[i] = signal[i] * w;
+    for (uint32_t i = 0; i < nb_s; i++) {
+        float32_t angle = 2 * PI * s_freq * ((float32_t)i / s_freq);
+        float32_t sin_val = arm_sin_f32(angle);
+        input_q15[i] = (q15_t)(sin_val * 32767); // Conversion en q15
     }
 }
 
-void perform_fft() {
+void generate_sine_wave_q31(q31_t *input_q31, uint32_t freq, uint32_t nb_s, uint32_t s_freq)
+{
+    for (uint32_t i = 0; i < nb_s; i++) {
+        float32_t angle = 2 * PI * s_freq * ((float32_t)i / s_freq);
+        float32_t sin_val = arm_sin_f32(angle);
+        input_q31[i] = (q31_t)(sin_val * 32767); // Conversion en q15
+    }
+}
+
+void combine_signals_evolve(float32_t *signal, uint32_t *frequencies, uint32_t frequenciesSize, uint32_t nb_s, uint32_t s_freq)
+{
+  for (int i=0; i<frequenciesSize; i++)
+    generate_sine_wave(signal, frequencies[i], nb_s, s_freq);
+}
+
+void combine_signals_evolve_q15(q15_t *signal, uint32_t *frequencies, uint32_t frequenciesSize, uint32_t nb_s, uint32_t s_freq)
+{
+  for (int i=0; i<frequenciesSize; i++)
+    generate_sine_wave_q15(signal, frequencies[i], nb_s, s_freq);
+}
+
+void combine_signals_evolve_q31(q31_t *signal, uint32_t *frequencies, uint32_t frequenciesSize, uint32_t nb_s, uint32_t s_freq)
+{
+  for (int i=0; i<frequenciesSize; i++)
+    generate_sine_wave_q31(signal, frequencies[i], nb_s, s_freq);
+}
+
+void perform_fft(uint32_t nb_s) {
     arm_cfft_instance_f32 fft_instance;
 
     // Initialisation de l'instance de FFT pour une longueur de 1024
-    arm_cfft_init_f32(&fft_instance, SAMPLES);
+    arm_cfft_init_f32(&fft_instance, nb_s);
 
     // Calcul de la FFT
     arm_cfft_f32(&fft_instance, signal, 0, 1);
 
     // Conversion des résultats de la FFT en magnitudes
-    arm_cmplx_mag_f32(signal, output, SAMPLES / 2);
+    arm_cmplx_mag_f32(signal, output, nb_s / 2);
+}
+
+void perform_fft_q15(uint32_t nb_s) {
+    arm_cfft_instance_q15 fft_instance;
+
+    // Initialisation de l'instance de FFT pour une longueur de 1024
+    arm_cfft_init_q15(&fft_instance, nb_s);
+
+    // Calcul de la FFT
+    arm_cfft_q15(&fft_instance, signal_q15, 0, 1);
+
+    // Conversion des résultats de la FFT en magnitudes
+    arm_cmplx_mag_q15(signal_q15, output_q15, nb_s / 2);
+}
+
+void perform_fft_q31(uint32_t nb_s) {
+    arm_cfft_instance_q31 fft_instance;
+
+    // Initialisation de l'instance de FFT pour une longueur de 1024
+    arm_cfft_init_q31(&fft_instance, nb_s);
+
+    // Calcul de la FFT
+    arm_cfft_q31(&fft_instance, signal_q31, 0, 1);
+
+    // Conversion des résultats de la FFT en magnitudes
+    arm_cmplx_mag_q31(signal_q31, output_q31, nb_s / 2);
 }
 
 void send_result(float32_t *tx_data, uint8_t len)
 {
   uint32_t data;
+  uint32_t sof = 5678;
+  printf("%ld\n", sof);
+  HAL_Delay(100);
   for (int i=0; i<len; i++){
     data = (uint32_t)(tx_data[i]*1000000);
     printf("%ld\n", data);
+  }
+}
+
+void send_benchmark(uint32_t **tx)
+{
+  uint32_t sof = 1234;
+  printf("%ld\n", sof);
+  HAL_Delay(100);
+  for (int j=0; j<3; j++)
+  {
+    for (int i=0; i<8; i++)
+      printf("%ld\n", tx[j][i]);
   }
 }
 
@@ -125,6 +192,57 @@ uint32_t stop_measurement(void)
 float32_t time_of_execution(uint32_t nb_of_cycles)
 {
   return 1000000*(float32_t)nb_of_cycles / HAL_RCC_GetHCLKFreq();
+}
+
+void benchmark_f32(uint32_t *freqs, uint32_t s_freq, uint32_t *time_of_exec_us)
+{
+  uint32_t nb_of_cycles = 0;
+  uint32_t nb_s = 8;
+
+  for (int i=0; i<8; i++)
+  {
+    nb_s *= 2;
+    combine_signals_evolve(signal, freqs, 3, nb_s, s_freq);
+    start_measurement();
+    for (int j=0; j<100; j++)
+      perform_fft(nb_s);
+    nb_of_cycles = stop_measurement();
+    time_of_exec_us[i] = time_of_execution(nb_of_cycles);
+  }
+}
+
+void benchmark_q15(uint32_t *freqs, uint32_t s_freq, uint32_t *time_of_exec_us)
+{
+  uint32_t nb_of_cycles = 0;
+  uint32_t nb_s = 8;
+
+  for (int i=0; i<8; i++)
+  {
+    nb_s *= 2;
+    combine_signals_evolve_q15(signal_q15, freqs, 3, nb_s, s_freq);
+    start_measurement();
+    for (int j=0; j<100; j++)
+      perform_fft_q15(nb_s);
+    nb_of_cycles = stop_measurement();
+    time_of_exec_us[i] = time_of_execution(nb_of_cycles);
+  }
+}
+
+void benchmark_q31(uint32_t *freqs, uint32_t s_freq, uint32_t *time_of_exec_us)
+{
+  uint32_t nb_of_cycles = 0;
+  uint32_t nb_s = 8;
+
+  for (int i=0; i<8; i++)
+  {
+    nb_s *= 2;
+    combine_signals_evolve_q31(signal_q31, freqs, 3, nb_s, s_freq);
+    start_measurement();
+    for (int j=0; j<100; j++)
+      perform_fft_q31(nb_s);
+    nb_of_cycles = stop_measurement();
+    time_of_exec_us[i] = time_of_execution(nb_of_cycles);
+  }
 }
 
 /* USER CODE END 0 */
@@ -162,18 +280,20 @@ int main(void)
   MX_USART3_UART_Init();
   MX_USB_OTG_FS_PCD_Init();
   /* USER CODE BEGIN 2 */
-  uint32_t nb_of_cycles = 0;
-  float32_t time_of_exec_us = 0.0;
   CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+  uint32_t nb_of_cycles = 0;
+  uint32_t nb_s = 8;
+  uint32_t s_freq = 1024;
   uint32_t frequencies[3] = {10, 20, 65};
-  combine_signals_evolve(signal, frequencies, 3);
-  start_measurement();
-  for (int i=0; i<1000; i++)
-  {
-    perform_fft();
-  }
-  nb_of_cycles = stop_measurement();
-  time_of_exec_us = time_of_execution(nb_of_cycles);
+  uint32_t time_of_exec_us[8] = {0};
+  uint32_t time_of_exec_us_q15[8] = {0};
+  uint32_t time_of_exec_us_q31[8] = {0};
+  uint32_t *time_of_execs[3] = {time_of_exec_us, time_of_exec_us_q15, time_of_exec_us_q31};
+
+  benchmark_f32(frequencies, s_freq, time_of_exec_us);
+  benchmark_q15(frequencies, s_freq, time_of_exec_us_q15);
+  benchmark_q31(frequencies, s_freq, time_of_exec_us_q31);
+  send_benchmark(time_of_execs);
 
 
   /* USER CODE END 2 */
@@ -182,7 +302,8 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	send_result(output, 150);
+	send_benchmark(time_of_execs);
+	//send_result(output, 150);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -382,3 +503,4 @@ void assert_failed(uint8_t *file, uint32_t line)
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */
+
