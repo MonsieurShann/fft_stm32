@@ -23,6 +23,7 @@
 #include "arm_math.h"
 #include <stdio.h>
 #include "core_cm4.h"
+#include "stm32f4xx_hal.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -32,14 +33,21 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define SAMPLES 2048  // Nombre de points pour la FFT
-#define SAMPLING_FREQUENCY 1024.0f
-float32_t signal[SAMPLES] = {0.0};
-float32_t output[SAMPLES] = {0.0};
-q15_t signal_q15[SAMPLES] = {0.0};
-q15_t output_q15[SAMPLES] = {0.0};
-q31_t signal_q31[SAMPLES] = {0.0};
-q31_t output_q31[SAMPLES] = {0.0};
+#define LISTENING 0xEA
+#define PROCESS_CMD 0xEB
+#define FFT_PROCESS 0xEF
+#define SEND_MEAS_UC 0xEE
+#define SAMPLE_NUM_MAX 16384
+
+#define SAMPLE_RATE 2048          // Exemple de fréquence d'échantillonnage
+#define NUM_SAMPLES 8192           // Nombre d'échantillons
+#define FREQUENCY 50               // Fréquence de l'onde sinusoïdale
+#define AMPLITUDE 1.0              // Amplitude de l'onde sinusoïdale
+float32_t signal[SAMPLE_NUM_MAX] = {0.0};
+float32_t output[SAMPLE_NUM_MAX/2] = {0.0};
+int counter = 0;
+uint32_t clk_ticks = 0;
+float32_t time_us = 0.0;
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -49,7 +57,12 @@ q31_t output_q31[SAMPLES] = {0.0};
 
 /* Private variables ---------------------------------------------------------*/
 UART_HandleTypeDef huart3;
+
+PCD_HandleTypeDef hpcd_USB_OTG_FS;
+
 /* USER CODE BEGIN PV */
+uint8_t cmd = LISTENING;
+uint8_t rx_data[12];
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -71,113 +84,6 @@ static void MX_USB_OTG_FS_PCD_Init(void);
 #define PUTCHAR_PROTOTYPE int fputc(int ch, FILE *f)
 #endif /* __GNUC__ */
 
-void generate_sine_wave(float32_t* signal, float32_t frequency, uint32_t nb_s, uint32_t s_freq) 
-{
-    for (uint32_t i = 0; i < nb_s; i++) {
-        float32_t angle = 2 * PI * frequency * ((float32_t)i / s_freq);
-        signal[i] += arm_sin_f32(angle);
-    }
-}
-
-void generate_sine_wave_q15(q15_t *input_q15, uint32_t freq, uint32_t nb_s, uint32_t s_freq) 
-{
-    for (uint32_t i = 0; i < nb_s; i++) {
-        float32_t angle = 2 * PI * s_freq * ((float32_t)i / s_freq);
-        float32_t sin_val = arm_sin_f32(angle);
-        input_q15[i] = (q15_t)(sin_val * 32767); // Conversion en q15
-    }
-}
-
-void generate_sine_wave_q31(q31_t *input_q31, uint32_t freq, uint32_t nb_s, uint32_t s_freq)
-{
-    for (uint32_t i = 0; i < nb_s; i++) {
-        float32_t angle = 2 * PI * s_freq * ((float32_t)i / s_freq);
-        float32_t sin_val = arm_sin_f32(angle);
-        input_q31[i] = (q31_t)(sin_val * 32767); // Conversion en q15
-    }
-}
-
-void combine_signals_evolve(float32_t *signal, uint32_t *frequencies, uint32_t frequenciesSize, uint32_t nb_s, uint32_t s_freq)
-{
-  for (int i=0; i<frequenciesSize; i++)
-    generate_sine_wave(signal, frequencies[i], nb_s, s_freq);
-}
-
-void combine_signals_evolve_q15(q15_t *signal, uint32_t *frequencies, uint32_t frequenciesSize, uint32_t nb_s, uint32_t s_freq)
-{
-  for (int i=0; i<frequenciesSize; i++)
-    generate_sine_wave_q15(signal, frequencies[i], nb_s, s_freq);
-}
-
-void combine_signals_evolve_q31(q31_t *signal, uint32_t *frequencies, uint32_t frequenciesSize, uint32_t nb_s, uint32_t s_freq)
-{
-  for (int i=0; i<frequenciesSize; i++)
-    generate_sine_wave_q31(signal, frequencies[i], nb_s, s_freq);
-}
-
-void perform_fft(uint32_t nb_s) {
-    arm_cfft_instance_f32 fft_instance;
-
-    // Initialisation de l'instance de FFT pour une longueur de 1024
-    arm_cfft_init_f32(&fft_instance, nb_s);
-
-    // Calcul de la FFT
-    arm_cfft_f32(&fft_instance, signal, 0, 1);
-
-    // Conversion des résultats de la FFT en magnitudes
-    arm_cmplx_mag_f32(signal, output, nb_s / 2);
-}
-
-void perform_fft_q15(uint32_t nb_s) {
-    arm_cfft_instance_q15 fft_instance;
-
-    // Initialisation de l'instance de FFT pour une longueur de 1024
-    arm_cfft_init_q15(&fft_instance, nb_s);
-
-    // Calcul de la FFT
-    arm_cfft_q15(&fft_instance, signal_q15, 0, 1);
-
-    // Conversion des résultats de la FFT en magnitudes
-    arm_cmplx_mag_q15(signal_q15, output_q15, nb_s / 2);
-}
-
-void perform_fft_q31(uint32_t nb_s) {
-    arm_cfft_instance_q31 fft_instance;
-
-    // Initialisation de l'instance de FFT pour une longueur de 1024
-    arm_cfft_init_q31(&fft_instance, nb_s);
-
-    // Calcul de la FFT
-    arm_cfft_q31(&fft_instance, signal_q31, 0, 1);
-
-    // Conversion des résultats de la FFT en magnitudes
-    arm_cmplx_mag_q31(signal_q31, output_q31, nb_s / 2);
-}
-
-void send_result(float32_t *tx_data, uint8_t len)
-{
-  uint32_t data;
-  uint32_t sof = 5678;
-  printf("%ld\n", sof);
-  HAL_Delay(100);
-  for (int i=0; i<len; i++){
-    data = (uint32_t)(tx_data[i]*1000000);
-    printf("%ld\n", data);
-  }
-}
-
-void send_benchmark(uint32_t **tx)
-{
-  uint32_t sof = 1234;
-  printf("%ld\n", sof);
-  HAL_Delay(100);
-  for (int j=0; j<3; j++)
-  {
-    for (int i=0; i<8; i++)
-      printf("%ld\n", tx[j][i]);
-  }
-}
-
 void start_measurement(void)
 {
   DWT->CYCCNT = 0;
@@ -194,75 +100,75 @@ float32_t time_of_execution(uint32_t nb_of_cycles)
   return 1000000*(float32_t)nb_of_cycles / HAL_RCC_GetHCLKFreq();
 }
 
-void benchmark_f32(uint32_t *freqs, uint32_t s_freq, uint32_t *time_of_exec_us)
+void generate_sine_wave(float32_t* signal, float32_t* output, float32_t freq, uint32_t num_samples, uint32_t sample_rate, float32_t amplitude)
 {
-  uint32_t nb_of_cycles = 0;
-  uint32_t nb_s = 8;
-
-  for (int i=0; i<8; i++)
+  for (uint32_t i = 0; i < num_samples; i++)
   {
-    nb_s *= 2;
-    combine_signals_evolve(signal, freqs, 3, nb_s, s_freq);
-    start_measurement();
-    for (int j=0; j<100; j++)
-      perform_fft(nb_s);
-    nb_of_cycles = stop_measurement();
-    time_of_exec_us[i] = time_of_execution(nb_of_cycles);
+    float32_t t = (float32_t)i / sample_rate;
+    float32_t angle = 2 * PI * freq * t;
+    signal[i] = amplitude * arm_sin_f32(angle);
   }
 }
 
-void benchmark_q15(uint32_t *freqs, uint32_t s_freq, uint32_t *time_of_exec_us)
-{
-  uint32_t nb_of_cycles = 0;
-  uint32_t nb_s = 8;
+void perform_fft(uint32_t nb_s) {
+    arm_cfft_instance_f32 fft_instance;
 
-  for (int i=0; i<8; i++)
-  {
-    nb_s *= 2;
-    combine_signals_evolve_q15(signal_q15, freqs, 3, nb_s, s_freq);
-    start_measurement();
-    for (int j=0; j<100; j++)
-      perform_fft_q15(nb_s);
-    nb_of_cycles = stop_measurement();
-    time_of_exec_us[i] = time_of_execution(nb_of_cycles);
-  }
+    // Initialisation de l'instance de FFT pour une longueur de 1024
+    arm_cfft_init_f32(&fft_instance, nb_s);
+
+    // Calcul de la FFT
+    arm_cfft_f32(&fft_instance, signal, 0, 1);
+
+    // Conversion des résultats de la FFT en magnitudes
+    arm_cmplx_mag_f32(signal, output, nb_s/2);
 }
 
-void benchmark_q31(uint32_t *freqs, uint32_t s_freq, uint32_t *time_of_exec_us)
+void send_result(float32_t *tx_data, uint16_t len)
 {
-  uint32_t nb_of_cycles = 0;
-  uint32_t nb_s = 8;
+  uint8_t data_to_send[4] = {0}; // Changer la taille à 4 octets pour float32_t
+  uint32_t sof = 6969;
+  uint32_t eof = 9999;
+  uint32_t num;
 
-  for (int i=0; i<8; i++)
+  data_to_send[0] = (sof >> 24) & 0xFF;
+  data_to_send[1] = (sof >> 16) & 0xFF;
+  data_to_send[2] = (sof >> 8) & 0xFF;
+  data_to_send[3] = (sof) & 0xFF;
+  HAL_UART_Transmit(&huart3, data_to_send, 4, HAL_MAX_DELAY);
+
+  for (int i = 0; i < len; i++)
   {
-    nb_s *= 2;
-    combine_signals_evolve_q31(signal_q31, freqs, 3, nb_s, s_freq);
-    start_measurement();
-    for (int j=0; j<100; j++)
-      perform_fft_q31(nb_s);
-    nb_of_cycles = stop_measurement();
-    time_of_exec_us[i] = time_of_execution(nb_of_cycles);
+    num = (uint32_t)(tx_data[i] * 1000000);
+    data_to_send[0] = (num >> 24) & 0xFF;
+    data_to_send[1] = (num >> 16) & 0xFF;
+    data_to_send[2] = (num >> 8) & 0xFF;
+    data_to_send[3] = (num) & 0xFF;
+    counter += 1;
+    HAL_UART_Transmit(&huart3, data_to_send, 4, HAL_MAX_DELAY);
   }
-}
 
+  data_to_send[0] = (eof >> 24) & 0xFF;
+  data_to_send[1] = (eof >> 16) & 0xFF;
+  data_to_send[2] = (eof >> 8) & 0xFF;
+  data_to_send[3] = (eof) & 0xFF;
+  HAL_UART_Transmit(&huart3, data_to_send, 4, HAL_MAX_DELAY);
+
+}
 /* USER CODE END 0 */
 
 /**
   * @brief  The application entry point.
   * @retval int
   */
-
 int main(void)
 {
-
   /* USER CODE BEGIN 1 */
-
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
 
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-  HAL_Init();
+   HAL_Init();
 
   /* USER CODE BEGIN Init */
 
@@ -280,34 +186,24 @@ int main(void)
   MX_USART3_UART_Init();
   MX_USB_OTG_FS_PCD_Init();
   /* USER CODE BEGIN 2 */
-  CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
-  uint32_t nb_of_cycles = 0;
-  uint32_t nb_s = 8;
-  uint32_t s_freq = 1024;
-  uint32_t frequencies[3] = {10, 20, 65};
-  uint32_t time_of_exec_us[8] = {0};
-  uint32_t time_of_exec_us_q15[8] = {0};
-  uint32_t time_of_exec_us_q31[8] = {0};
-  uint32_t *time_of_execs[3] = {time_of_exec_us, time_of_exec_us_q15, time_of_exec_us_q31};
-
-  benchmark_f32(frequencies, s_freq, time_of_exec_us);
-  benchmark_q15(frequencies, s_freq, time_of_exec_us_q15);
-  benchmark_q31(frequencies, s_freq, time_of_exec_us_q31);
-  send_benchmark(time_of_execs);
-
 
   /* USER CODE END 2 */
-
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	send_benchmark(time_of_execs);
-	//send_result(output, 150);
+    generate_sine_wave(signal, output, FREQUENCY, NUM_SAMPLES, SAMPLE_RATE, AMPLITUDE);
+
+    start_measurement();
+    perform_fft(NUM_SAMPLES);
+    clk_ticks = stop_measurement();
+    time_us = time_of_execution(clk_ticks);
+
+    send_result(output, NUM_SAMPLES);
+	  HAL_Delay(15000);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-
   }
   /* USER CODE END 3 */
 }
@@ -325,7 +221,6 @@ void SystemClock_Config(void)
   */
   __HAL_RCC_PWR_CLK_ENABLE();
   __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
-
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
@@ -342,7 +237,6 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
-
   /** Initializes the CPU, AHB and APB buses clocks
   */
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
@@ -398,7 +292,32 @@ static void MX_USART3_UART_Init(void)
   */
 static void MX_USB_OTG_FS_PCD_Init(void)
 {
-	/**/
+
+  /* USER CODE BEGIN USB_OTG_FS_Init 0 */
+
+  /* USER CODE END USB_OTG_FS_Init 0 */
+
+  /* USER CODE BEGIN USB_OTG_FS_Init 1 */
+
+  /* USER CODE END USB_OTG_FS_Init 1 */
+  hpcd_USB_OTG_FS.Instance = USB_OTG_FS;
+  hpcd_USB_OTG_FS.Init.dev_endpoints = 6;
+  hpcd_USB_OTG_FS.Init.speed = PCD_SPEED_FULL;
+  hpcd_USB_OTG_FS.Init.dma_enable = DISABLE;
+  hpcd_USB_OTG_FS.Init.phy_itface = PCD_PHY_EMBEDDED;
+  hpcd_USB_OTG_FS.Init.Sof_enable = ENABLE;
+  hpcd_USB_OTG_FS.Init.low_power_enable = DISABLE;
+  hpcd_USB_OTG_FS.Init.lpm_enable = DISABLE;
+  hpcd_USB_OTG_FS.Init.vbus_sensing_enable = ENABLE;
+  hpcd_USB_OTG_FS.Init.use_dedicated_ep1 = DISABLE;
+  if (HAL_PCD_Init(&hpcd_USB_OTG_FS) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USB_OTG_FS_Init 2 */
+
+  /* USER CODE END USB_OTG_FS_Init 2 */
+
 }
 
 /**
@@ -409,8 +328,6 @@ static void MX_USB_OTG_FS_PCD_Init(void)
 static void MX_GPIO_Init(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
-/* USER CODE BEGIN MX_GPIO_Init_1 */
-/* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOC_CLK_ENABLE();
@@ -452,24 +369,10 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(USB_OverCurrent_GPIO_Port, &GPIO_InitStruct);
 
-/* USER CODE BEGIN MX_GPIO_Init_2 */
-/* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
-/**
- * @brief Retargets the C library printf function to the USART.
- * @param None
- * @retval None
- */
-PUTCHAR_PROTOTYPE
-{
- /* Place your implementation of fputc here */
- /* e.g. write a character to the USART2 and Loop until the end of transmission */
- HAL_UART_Transmit(&huart3, (uint8_t *)&ch, 1, 0xFFFF);
 
-return ch;
-}
 /* USER CODE END 4 */
 
 /**
@@ -504,3 +407,4 @@ void assert_failed(uint8_t *file, uint32_t line)
 }
 #endif /* USE_FULL_ASSERT */
 
+/************************ (C) COPYRIGHT STMicroelectronics *****END OF FILE****/
