@@ -1,79 +1,56 @@
 import serial
-import matplotlib
-matplotlib.use('TkAgg')
+import struct
 import matplotlib.pyplot as plt
 
-class PcRemote:
-    def __init__(self, port, limit):
-        self.meas = []
-        self.bench = []
-        self.limit = limit
-        self.port = port
-        self.com = None
-        self.listen()
+# Configuration du port série
+ser = serial.Serial(
+    port='/dev/ttyACM0',  # Remplacez par le port série approprié pour votre système
+    baudrate=115200,  # Débit en bauds, doit correspondre à celui du microcontrôleur
+    parity=serial.PARITY_NONE,
+    stopbits=serial.STOPBITS_ONE,
+    bytesize=serial.EIGHTBITS,
+    timeout=1  # Temps d'attente pour la lecture (en secondes)
+)
 
-    def init_com(self):
-        return serial.Serial(self.port , 115200, timeout=1000)
-    
-    def listen(self):
-        data = None
-        self.com = self.init_com()
-        while not data:
-            try:
-                data = self.com.readline().decode('latin-1').rstrip()  # Utilisation de 'latin-1' pour éviter les erreurs de décodage
-                if (int)(data) == 1234:
-                    self.benchmark()
-                if (int)(data) == 5678:
-                    self.fft()
-            except UnicodeDecodeError as e:
-                print(f"Unicode decode error: {e}")
-    
-    def benchmark(self):
-        counter = 0
-        while counter < 24:
-            try:
-                data = self.com.readline().decode('latin-1').rstrip()  # Utilisation de 'latin-1' pour éviter les erreurs de décodage
-                self.bench.append(int(data))
-                counter += 1
-            except UnicodeDecodeError as e:
-                print(f"Unicode decode error: {e}")
-        self.plot_bench()
+def read_uart(sof, eof):
+    recording = False
+    STOP = False
+    meas = []
+    try:
+        while not STOP:
+            if ser.in_waiting > 0:
+                data = ser.read(4)  # Lire 4 octets à la fois pour float32_t
+                if len(data) == 4:
+                    # Conversion des données reçues en float
+                    received_value = struct.unpack('>I', data)[0]  # '>f' pour big-endian float
+                    print(received_value)
+                    if(recording == True):
+                        meas.append(received_value/10000)
 
-    
-    def fft(self):
-        counter = 0
-        while counter < self.limit:
-            try:
-                data = self.com.readline().decode('latin-1').rstrip()  # Utilisation de 'latin-1' pour éviter les erreurs de décodage
-                self.meas.append(int(data))
-                counter += 1
-            except UnicodeDecodeError as e:
-                print(f"Unicode decode error: {e}")
-        self.plot_fft()
+                    if(received_value == sof):
+                        print('SOOOOOOOOOOOOOF')
+                        recording = True
 
-    def plot_fft(self):
-        plt.style.use('dark_background')
-        x = [i for i in range(self.limit)]
-        y = [self.meas[i]/1000000 for i in range(self.limit)]
-        plt.plot(x, y, 'r')
-        plt.show()
+                    if(received_value == eof):
+                        STOP = True
+                        plot(meas)
+    except KeyboardInterrupt:
+        print("Exiting Program")
+    except Exception as e:
+        print(f"Error: {e}")
+    finally:
+        ser.close()
 
-    def plot_bench(self):
-        nb_fft = 100
-        plt.style.use('dark_background')
-        x = [pow(2, 4+i) for i in range(8)]
-        y_1 = [self.bench[i]/nb_fft for i in range(8)]
-        y_2 = [self.bench[i]/nb_fft for i in range(8, 16)]
-        y_3 = [self.bench[i]/nb_fft for i in range(16, 24)]
-        plt.plot(x, y_1, 'b', label='float 32')
-        plt.plot(x, y_2, 'r', label='q15')
-        plt.plot(x, y_3, 'g', label= 'q31')
-        plt.legend()
-        plt.title('Average time by fft in function of number of samples')
-        plt.xlabel('Number of samples by fft')
-        plt.ylabel('Time by fft (us)')
-        plt.show()
+def plot(meas):
+    plt.style.use('dark_background')
+    x = [0.5*i*2048/8192 for i in range(len(meas)-2)]
+    y = meas[1: -1]
+    plt.title('f sample = 2048 Hz, Num sample = 8192')
+    plt.xlabel('Freq (Hz)')
+    plt.ylabel('Amplitude')
+    plt.axvline(x=50, color='red', linestyle='--', label='Fondamental')
+    plt.plot(x, y)
+    plt.show()
 
-
-pcr = PcRemote("/dev/ttyACM0", 150)
-
+if __name__ == "__main__":
+    read_uart(6969, 9999)
